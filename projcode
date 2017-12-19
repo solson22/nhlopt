@@ -1,0 +1,372 @@
+# Code accessing the nhl ratings csv with all of the players and their 
+# respective attributes. 
+raw = readdlm("nhl ratings.csv",',');
+(m,n) = size(raw)
+
+n_players = 2:m
+n_attributes = 2:n
+
+player = raw[n_players,1][:]
+attribute = raw[1,n_attributes][:];
+
+
+
+# defining reference arrays for each of the attributes so they can be used 
+# to define each player
+team = raw[n_players,2][:]
+position = raw[n_players,3][:]
+overall = raw[n_players,4][:]
+skate = raw[n_players,5][:]
+shot = raw[n_players,6][:]
+hands = raw[n_players,7][:]
+checking = raw[n_players,8][:]
+defense = raw[n_players,9][:]
+weight = raw[n_players,10][:]
+hand = raw[n_players,11][:]
+salary = raw[n_players,12];
+
+
+
+
+###MODEL FOR PREDICTING WHICH PLAYERS WILL BE AVAILABLE FOR US TO CHOOSE
+using JuMP
+m3 = Model()
+
+#players that are goalies (position is 1)
+goalie = [7 18 28 38 42 60 65 69 82 100 107 116]
+
+#decision variable for which players will be protected by their current team
+@variable(m3, p[1:120], Bin)
+#decision variable for which players that we select 
+@variable(m3, x[1:120], Bin)
+
+#constraint that says the total amount protected will be 12 (each team protects two players of their choice)
+@constraint(m3, sum(p) == 12)
+
+#constraint that says we only take 18 players (10 forwards, 6 defenseman, 2 goalies)
+@constraint(m3, sum(x) == 18)
+
+#each team must protext 2 players 
+
+@constraint(m3, sum{p[i]*team[i], i in 1:20} >= 2) #blackhawks
+@constraint(m3, sum{p[i]*team[i], i in 21:40} >= 4) #avalanche
+@constraint(m3, sum{p[i]*team[i], i in 41:60} >= 6) #stars
+@constraint(m3, sum{p[i]*team[i], i in 61:80} >= 8) #wild
+@constraint(m3, sum{p[i]*team[i], i in 81:100} >= 10) #predators
+@constraint(m3, sum{p[i]*team[i], i in 101:120} >= 12) #blues
+
+#constraint that says a team cannot protect only 2 forwards or only 2 goalies
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 1:20} <= 5) #blackhawks 
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 21:40} <= 5) #avalanche
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 41:60} <= 5) #stars
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 61:80} <= 5) #wild
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 81:100} <= 5) #predators
+@constraint(m3, 3 <= sum{p[i]*position[i], i in 101:120} <= 5) #blues
+
+####################################################################################
+#portion where take players are selected based on who is available
+
+#constraint that says if a player was protected, they are no longer available
+for i in 1:120
+    @constraint(m3, x[i] <= (1-p[i]))
+end
+
+#cannot take more than 3 players from each team
+@constraint(m3, sum{x[i]*team[i], i in 1:20} <= 3) #blackhawks 
+@constraint(m3, sum{x[i]*team[i], i in 21:40} <= 6) #avalanche
+@constraint(m3, sum{x[i]*team[i], i in 41:60} <= 9) #stars   
+@constraint(m3, sum{x[i]*team[i], i in 61:80} <= 12) #wild
+@constraint(m3, sum{x[i]*team[i], i in 81:100} <= 15) #predators
+@constraint(m3, sum{x[i]*team[i], i in 101:120} <= 18) #blues
+
+#constraint that says we need 2 goalies
+@constraint(m3, sum{x[i]*position[i], i in goalie} == 2)
+
+#constraint that says we need 6 defensemen and 10 forwards
+@constraint(m3, sum{x[i]*position[i], i in 1:120} == 44)
+
+#salary cap constraint
+@constraint(m3, sum{x[i]*salary[i], i in 1:120} <= 29000)
+
+#constraint that dictates that our average overall rating cannot exceed third quartile in our division (84%)
+#implemented in the analysis portion
+#@addConstraint(m3, sum{x[i]*overall[i], i in 1:120} <= 84*18 )
+
+#objective function that prioritizes the protected players over the available players
+@objective(m3, Max, sum{(p[i]+.5x[i])*(overall[i]+skate[i]+shot[i]+hands[i]+checking[i]+defense[i]
+    +.025*weight[i]), i in 1:120})
+solve(m3)
+
+println("The players that get protected are:")
+println()
+println("Player","      ","Overall", " ", "Team"," ", "Position","  ","Shot"," ","  ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(p[i]) == 1 
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"        ",shot[i],"    ",hands[i],"        " ,salary[i])
+    end
+end
+println()
+println("The players that we select are:")
+println()
+println("Player","      ","Overall", " ", "Team"," ", "Position","  ","Shot"," ","  ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"       ",shot[i],"     ",hands[i],"        " ,salary[i])
+    end
+end
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+
+
+
+
+#PART A
+
+using PyPlot
+PyPlot.svg(true)
+
+xx = 1:120
+figure(figsize=(10,4))
+plot(xx,overall,"-", color = "red");
+scatter([xx[2],xx[3],xx[4],xx[22],xx[23],xx[25],xx[44],xx[45],xx[47],xx[63],xx[64],xx[65],xx[83],xx[84],
+xx[85],xx[103],xx[104],xx[107]],[overall[2],overall[3],overall[4],overall[22],overall[23],overall[25],overall[44],
+overall[45],overall[47],overall[63],overall[64],overall[65],overall[83],overall[84],overall[85],
+overall[103],overall[104],overall[107]], label="Our Players", color = "black")
+
+axis([0,120,65,95])
+legend(["Player Ranking" ], loc="lower right");
+title("Expansion Team: Overall Player Ranking");
+ylabel("Rating")
+xlabel("Player")
+println()
+println("Player","           ","Overall", " ", "Team"," ", "Position","  ","Shot","   ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"       ",shot[i],"    ",
+        hands[i],"      " ,salary[i])
+    end
+end
+@expression(m3, avg, (sum{x[i]*overall[i], i in 1:120})/18)
+@expression(m3, salaryhit, sum{x[i]*salary[i], i in 1:120})
+println()
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+println("The average overall rating is: ",getvalue(avg))
+println("The total salary hit is: ", getvalue(salaryhit))
+
+
+
+
+
+PART B
+#COMPOSITION OF TEAM IF WE ARE RESTRICTED TO AN AVERAGE OVERALL RATING OF 84 OR LOWER
+
+using PyPlot
+PyPlot.svg(true)
+
+
+xx = 1:120
+figure(figsize=(10,4))
+plot(overall,"-", color = "red");
+scatter([xx[3],xx[6],xx[8],xx[22],xx[29],xx[30],xx[44],xx[46],xx[47],xx[62],xx[65],xx[66],xx[84],xx[86],
+xx[92],xx[102],xx[103],xx[106]],[overall[4],overall[7],overall[9],overall[23],overall[30],overall[31],
+overall[45],overall[47],overall[48],overall[63],overall[66],overall[67],overall[85],overall[87],overall[93],
+overall[103],overall[104],overall[107]], label="Our Players", color = "black")
+axis([0,120,65,95])
+
+legend(["Player Ranking" ], loc="lower right");
+title("Expansion Team: Overall Player Ranking (84% Average Overall Rating Restriction)");
+ylabel("Rating")
+xlabel("Player")
+println()
+println("Player","           ","Overall", " ", "Team"," ", "Position","  ","Shot"," ","   ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"      ",shot[i]
+        ,"       ",hands[i],"      " ,salary[i])
+    end
+end
+@expression(m3, salaryhit, sum{x[i]*salary[i], i in 1:120})
+@expression(m3, avg, (sum{x[i]*overall[i], i in 1:120})/18)
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+println("The average overall rating with the 84% ceiling is: ",getvalue(avg))
+println("The total salary hit is: ", getvalue(salaryhit))
+Player           Overall Team Position  Shot    Hands   Salary
+Keith, D.       91    1    2      84       91      1620
+Seabrook, B.    89    1    2      82       84      1580
+Hossa, M.       89    1    3      87       89      1660
+Stastny, P.     86    2    3      85       88      1550
+Landeskog, G.   85    2    3      86       86      1590
+O'Reilly, R.    84    2    3      85       84      1540
+Daley, T.       85    3    2      80       82      1470
+Cole, E.        84    3    3      85       84      1520
+Goligoski, A.   83    3    2      84       88      1490
+Koivu, M.       87    4    3      86       88      1610
+Pominville, J.  87    4    3      87       88      1570
+Backstrom, N.   85    4    1      87       84      1600
+Fisher, M.      84    5    3      84       84      1520
+Legwand, D.     84    5    3      85       85      1540
+Wilson, C.      84    5    3      86       85      1560
+Bouwmeester, J. 86    6    2      82       86      1570
+Shattenkirk, K. 86    6    2      83       87      1560
+Halak, J.       85    6    1      87       88      1630
+
+The total score for the team: 11020.662499999999
+The average overall rating with the 84% ceiling is: 85.77777777777777
+The total salary hit is: 28180.0
+
+#PART C
+
+#TRADEOFF ANALYSIS FOR EMPHASIS ON OVERALL RATING
+#team selection when hands rating is normal vs. hands rating is 100x
+xx = 1:120
+figure(figsize=(10,4))
+plot([1:120],[overall],"-", color = "red");
+
+#players at normal overall rating weight
+scatter([xx[2],xx[3],xx[4],xx[22],xx[23],xx[25],xx[44],xx[45],xx[47],xx[63],xx[64],xx[65],xx[83],xx[84],
+xx[85],xx[103],xx[104],xx[107]],[overall[2],overall[3],overall[4],overall[22],overall[23],overall[25],overall[44],
+overall[45],overall[47],overall[63],overall[64],overall[65],overall[83],overall[84],overall[85],overall[103],
+overall[104],overall[107]], label="Players (Default)", color = "black")
+
+#players at 100X
+scatter([xx[1],xx[4],xx[7],xx[22],xx[26],xx[27],xx[43],xx[47],xx[48],xx[63],xx[64],xx[73],xx[81],
+xx[84],xx[86],xx[103],xx[104],xx[107]],[overall[1],overall[4],overall[7],overall[22],overall[26],overall[27],
+overall[43],overall[47],overall[48], overall[63],overall[64],overall[73],overall[81],overall[84],overall[86],
+overall[103],overall[104],overall[107]],label="Players (Hands Emphasis)", color = "blue")
+
+axis([0,120,65,95])
+
+legend(loc="lower right");
+title("Expansion Team: Overall Player Ranking");
+ylabel("Rating")
+xlabel("Player")
+
+println()
+println("Player","           ","Overall", " ", "Team"," ", "Position","  ","Shot"," ","   ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"      ",shot[i],"       ",
+        hands[i],"      " ,salary[i])
+    end
+end
+@expression(m3, salaryhit, sum{x[i]*salary[i], i in 1:120})
+@expression(m3, avg, (sum{x[i]*overall[i], i in 1:120})/18)
+println()
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+println("The average overall rating with a hands emphasis is: ",getvalue(avg))
+println("The total salary hit is: ", getvalue(salaryhit))
+
+
+#PART D
+
+#TRADEOFF ANALYSIS FOR EMPHASIS ON OVERALL RATING
+#team selection when checking rating is normal vs. checking rating is 100x
+xx = 1:120
+figure(figsize=(10,4))
+plot([1:120],[overall],"-", color = "red");
+
+#players at normal overall rating weight
+scatter([xx[2],xx[3],xx[4],xx[22],xx[23],xx[25],xx[44],xx[45],xx[47],xx[63],xx[64],xx[65],xx[83],xx[84],
+xx[85],xx[103],xx[104],xx[107]],[overall[2],overall[3],overall[4],overall[22],overall[23],overall[25],
+overall[44],overall[45],
+overall[47],overall[63],overall[64],overall[65],overall[83],overall[84],overall[85],overall[103],overall[104],
+overall[107]], label="Players (Default)", color = "black")
+
+#players at 100X
+scatter([xx[7],xx[8],xx[13],xx[31],xx[35],xx[39],xx[44],xx[45],xx[46],xx[63],xx[65],xx[72],xx[85],
+xx[93],xx[96],xx[102],xx[110],xx[114]],[overall[7],overall[8],overall[13],overall[31],overall[35],
+overall[39],overall[44],overall[45],overall[46],overall[63],overall[65],overall[72],overall[85],overall[93],
+overall[96],overall[102],overall[110],overall[114]],label="Players (Checking Emphasis)", color = "blue")
+
+axis([0,120,65,95])
+legend(loc="lower right");
+title("Expansion Team: Overall Player Ranking");
+ylabel("Rating")
+xlabel("Player")
+
+println()
+println("Player","           ","Overall", " ", "Team"," ", "Position","  ","Checking"," ","   ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"       ",checking[i],"         ",
+        hands[i],"       " ,salary[i])
+    end
+end
+@expression(m3, salaryhit, sum{x[i]*salary[i], i in 1:120})
+println()
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+@expression(m3, avg, (sum{x[i]*overall[i], i in 1:120})/18)
+println("The average overall rating with a checking emphasis is: ",getvalue(avg))
+println("The total salary hit is: ", getvalue(salaryhit))
+
+
+
+#PART E
+
+##TRADEOFF ANALYSIS FOR EMPHASIS ON OVERALL RATING
+#team selection when salary is a negative in the objective function, aka we want the cheapest team possible
+xx = 1:120
+figure(figsize=(10,4))
+plot([1:120],[overall],"-", color = "red");
+
+#players at normal salary weight
+scatter([xx[2],xx[3],xx[4],xx[22],xx[23],xx[25],xx[44],xx[45],xx[47],xx[63],xx[64],xx[65],xx[83],xx[84],
+xx[85],xx[103],xx[104],xx[107]],[overall[2],overall[3],overall[4],overall[22],overall[23],overall[25],
+overall[44],overall[45],overall[47],overall[63],overall[64],overall[65],overall[83],overall[84],overall[85],
+overall[103],overall[104],overall[107]], label="Players (Default)", color = "black")
+
+#players at 100X salary weight
+scatter([xx[16],xx[17],xx[18],xx[36],xx[37],xx[39],xx[57],xx[58],xx[60],xx[77],xx[78],xx[79],xx[94],
+xx[97],xx[98],xx[108],xx[117],xx[119]],[overall[16],overall[17],overall[18],overall[36],overall[37],overall[39],
+overall[57],overall[58],overall[60],overall[77],overall[78],
+overall[79],overall[94],overall[97],overall[98],overall[108],overall[117],overall[119]], 
+label="Players (Cost Reduction Emphasis)", color = "blue")
+
+axis([0,120,65,95])
+
+legend(loc="lower right");
+title("Expansion Team: Overall Player Ranking");
+ylabel("Rating")
+xlabel("Player")
+
+println()
+println("Player","           ","Overall", " ", "Team"," ", "Position","  ","Shot"," ","   ","Hands","   ", "Salary")
+for i in 1:120
+    if getvalue(x[i]) == 1
+        println(player[i]," ",overall[i],"    ",team[i],"    ", position[i],"      ",shot[i],
+        "       ",hands[i],"      " ,salary[i])
+    end
+end
+@expression(m3, salaryhit, sum{x[i]*salary[i], i in 1:120})
+println()
+println()
+println("The total score for the team: ", getobjectivevalue(m3))
+@expression(m3, avg, (sum{x[i]*overall[i], i in 1:120})/18)
+println("The average overall rating with a cost savings emphasis: ",getvalue(avg))
+println("The total salary hit is: ", getvalue(salaryhit))
+
+
+
+#PART F
+
+#TRADEOFF ANALYSIS FOR SALARY CAP
+
+cap = [28000, 27500, 27000, 26500, 26000, 25500, 25000, 24500, 24000, 23500 ]
+# sum of overall values for expansion team when objective function is only based on 
+# the overall value and the salary cap is decreasing by 500, starting at 
+# 28000 down to 23500. It is infeasible at 23000. 
+totovr = [1542, 1538, 1526 , 1510, 1492, 1473, 1453, 1430, 1404, 1370 ]
+
+using PyPlot
+PyPlot.svg(true)
+
+figure(figsize=(10,5))
+plot([cap],[totovr],".-");
+legend(["Overall Score of Expansion team", "Salary Cap"], loc="lower right");
+ylabel("Objective Value")
+xlabel("Salary Cap")
+;
